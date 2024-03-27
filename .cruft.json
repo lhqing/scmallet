@@ -1,0 +1,29 @@
+{
+  "template": "https://github.com/scverse/cookiecutter-scverse",
+  "commit": "afeff263e2ac0eaaccdbbf07fa2925b4f028d643",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "scmallet",
+      "package_name": "scmallet",
+      "project_description": "Python wrapper of MALLET for LDA analysis on single-cell data",
+      "author_full_name": "Hanqing Liu",
+      "author_email": "hanqingliu@fas.harvard.edu",
+      "github_user": "lhqing",
+      "project_repo": "https://github.com/lhqing/scmallet",
+      "license": "MIT License",
+      "_copy_without_render": [
+        ".github/workflows/build.yaml",
+        ".github/workflows/test.yaml",
+        "docs/_templates/autosummary/**.rst"
+      ],
+      "_render_devdocs": false,
+      "_jinja2_env_vars": {
+        "lstrip_blocks": true,
+        "trim_blocks": true
+      },
+      "_template": "https://github.com/scverse/cookiecutter-scverse"
+    }
+  },
+  "directory": null
+}
