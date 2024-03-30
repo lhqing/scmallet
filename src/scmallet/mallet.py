@@ -17,8 +17,8 @@ from .utils import MALLET_COMMAND_MAP, MALLET_JAVA_BASE
 
 
 @ray.remote
-def _do_nothing(num_topics):
-    return num_topics
+def _do_nothing(num_topics, renew):
+    return num_topics, renew
 
 
 class Mallet:
@@ -102,10 +102,11 @@ class Mallet:
         while tasks:
             done, tasks = ray.wait(tasks)
             for task in done:
-                num_topics = ray.get(task)
+                num_topics, renew = ray.get(task)
                 # save topic feather files
-                self.get_cell_topics(num_topics, renew=True)
-                self.get_region_topics(num_topics, renew=True)
+                if renew:
+                    self.get_cell_topics(num_topics, renew=renew)
+                    self.get_region_topics(num_topics, renew=renew)
 
         self.trained = True
         self._post_fit()
@@ -203,7 +204,7 @@ class Mallet:
             with open(flag_path) as fin:
                 cur_cycle = int(fin.read())
                 if cur_cycle >= iterations:
-                    return _do_nothing.remote(num_topics)
+                    return _do_nothing.remote(num_topics, False)
         else:
             cur_cycle = 0
         optimize_burn_in = max(0, optimize_burn_in - cur_cycle)
@@ -260,7 +261,9 @@ class Mallet:
             # temp to final
             for path in temp_paths:
                 path.rename(path.with_name(path.name[:-5]))
-            return num_topics
+
+            renew = True  # renew the cell and region topics
+            return num_topics, renew
 
         _temp_paths = [state_path, doctopics_path, inferencer_path, topickeys_path]
         task = _train_worker.remote(
