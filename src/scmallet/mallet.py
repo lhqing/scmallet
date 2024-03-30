@@ -437,15 +437,15 @@ class Mallet:
             data_remote = ray.put(data)
 
             # get the number of cpu available and adjust the chunk size
-            n_cpu = int(ray.available_resources()["CPU"])
-            chunk_size = max(100, (data.shape[1] + n_cpu) // int(n_cpu / 2))
+            n_cpu = int(ray.available_resources()["CPU"] / 1.21)  # each job take 1.2 cpu
+            chunk_size = max(100, (data.shape[1] + n_cpu) // n_cpu)
 
             # convert input for each model, this is required as the train_mallet and train_id2word files are different for each model
             futures = {}
             _futures = [
                 remote_convert_input.remote(
                     data=data_remote,
-                    temp_dir=model_temp_dir,
+                    temp_dir=parent_temp_dir,
                     chunk_start=chunk_start,
                     chunk_end=min(chunk_start + chunk_size, data.shape[1]),
                     train_mallet_file=temp_mallet_path,

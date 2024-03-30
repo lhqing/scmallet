@@ -8,7 +8,7 @@ from .input import convert_input
 from .utils import MALLET_COMMAND_MAP, MALLET_JAVA_BASE
 
 
-@ray.remote(num_cpus=2)
+@ray.remote(num_cpus=1.2)
 def remote_convert_input(
     data: ray.ObjectRef,
     chunk_start: int,
@@ -60,7 +60,7 @@ def _infer(
     return
 
 
-@ray.remote(num_cpus=1)
+@ray.remote(num_cpus=1.1)
 def remote_infer(
     mallet_path,
     inferencer_path,
