@@ -495,8 +495,7 @@ class Mallet:
         Dict
             Dictionary of inferred topics for each number of topics.
         """
-        data = adata.X.T
-        results = self.parallel_infer(data, use_num_topics, **infer_kwargs)
+        results = self.parallel_infer(adata, use_num_topics, **infer_kwargs)
         if binarize:
             binary_results = {}
             for num_topics, doc_topic in results.items():
