@@ -1,5 +1,6 @@
 import shlex
 import subprocess
+import tempfile
 from pathlib import Path
 
 import joblib
@@ -10,6 +11,7 @@ from gensim import utils
 from gensim.utils import revdict
 
 from .binarize import binarize_topics
+from .infer import remote_convert_input, remote_infer
 from .input import convert_input, prepare_binary_matrix
 from .utils import MALLET_COMMAND_MAP, MALLET_JAVA_BASE
 
@@ -128,11 +130,13 @@ class Mallet:
     def _get_train_flag_path(self, num_topics):
         return self._get_topic_path(num_topics, "train_flag.txt", temp=False)
 
-    def _get_train_cell_topics_path(self, num_topics, temp=False):
-        return self._get_topic_path(num_topics, "cell_topics.feather", temp=temp)
+    def _get_train_cell_topics_path(self, num_topics, temp=False, binary=False):
+        binary_str = "_binarized" if binary else ""
+        return self._get_topic_path(num_topics, f"cell_topics{binary_str}.feather", temp=temp)
 
-    def _get_train_region_topics_path(self, num_topics, temp=False):
-        return self._get_topic_path(num_topics, "region_topics.feather", temp=temp)
+    def _get_train_region_topics_path(self, num_topics, temp=False, binary=False):
+        binary_str = "_binarized" if binary else ""
+        return self._get_topic_path(num_topics, f"region_topics{binary_str}.feather", temp=temp)
 
     def _temp_to_final(self, path):
         if not Path(path).exists():
@@ -332,9 +336,9 @@ class Mallet:
         cell_by_topic.index.name = "cell"
         cell_by_topic.columns = [f"topic{i}" for i in range(num_topics)]
         cell_by_topic.reset_index().to_feather(temp_path)
-        path = self._temp_to_final(temp_path)
+        self._temp_to_final(temp_path)
 
-        binarized_path = path.with_name(path.name[:-7] + "_binarized.feather")
+        binarized_path = self._get_train_cell_topics_path(num_topics, binary=True)
         self._save_binarized_topics(cell_by_topic, path=binarized_path)
         return cell_by_topic
 
@@ -366,16 +370,139 @@ class Mallet:
         region_by_topic.columns = [f"topic{i}" for i in range(num_topics)]
         temp_path = self._get_train_region_topics_path(num_topics, temp=True)
         region_by_topic.reset_index().to_feather(temp_path)
-        path = self._temp_to_final(temp_path)
+        self._temp_to_final(temp_path)
 
-        binarized_path = path.with_name(path.name[:-7] + "_binarized.feather")
+        binarized_path = self._get_train_region_topics_path(num_topics, binary=True)
         self._save_binarized_topics(region_by_topic, path=binarized_path)
         return region_by_topic
 
     def _post_fit(self):
         self.trained = True
-
         # scan output dir and get trained topics
         for topic_dir in self.output_dir.glob("topic*"):
             num_topics = int(topic_dir.name[5:])
             self.trained_num_topics.add(num_topics)
+        return
+
+    def parallel_infer(
+        self,
+        data,
+        use_num_topics,
+        topic_threshold=0.0,
+        num_iterations=300,
+        random_seed=555,
+        mem_gb=16,
+    ):
+        """
+        Infer topics for new data in parallel.
+
+        Parameters
+        ----------
+        data: sparse.csr_matrix
+            Binary matrix containing cell/document as columns and regions/words as rows.
+        topic_threshold : float, optional
+            Threshold of the probability above which we consider a topic. Default: 0.0.
+        num_iterations : int, optional
+            Number of training iterations. Default: 300.
+        random_seed: int, optional
+            Random seed to ensure consistent results. Default: 555.
+        mem_gb: int, optional
+            Memory to use in GB. Default: 16.
+        """
+        if not self.trained:
+            raise ValueError(f"No trained model found at {self.output_dir}")
+
+        with tempfile.TemporaryDirectory(prefix="bolero_") as parent_temp_dir:
+            actual_train_mallet = Path(self.train_mallet_file)
+            temp_mallet_path = Path(f"{parent_temp_dir}/{actual_train_mallet.name}")
+            # copy the mallet file to temp path and make it read only
+            subprocess.run(["cp", actual_train_mallet, temp_mallet_path], check=True)
+
+            model_dict = {}
+            use_num_topics = set(use_num_topics) & self.trained_num_topics
+            for num_topics in use_num_topics:
+                model_temp_dir = tempfile.mkdtemp(dir=parent_temp_dir, prefix=f"topic{num_topics}_")
+                model_dict[model_temp_dir] = self._get_topic_inferencer_path(num_topics)
+
+            data, cell_names, _ = prepare_binary_matrix(data)
+            data_remote = ray.put(data)
+
+            # get the number of cpu available and adjust the chunk size
+            n_cpu = int(ray.available_resources()["CPU"])
+            chunk_size = max(100, (data.shape[1] + n_cpu) // int(n_cpu / 2))
+
+            # convert input for each model, this is required as the train_mallet and train_id2word files are different for each model
+            futures = {}
+            _futures = [
+                remote_convert_input.remote(
+                    data=data_remote,
+                    temp_dir=model_temp_dir,
+                    chunk_start=chunk_start,
+                    chunk_end=min(chunk_start + chunk_size, data.shape[1]),
+                    train_mallet_file=temp_mallet_path,
+                    train_id2word_file=self.train_id2word_file,
+                    mem_gb=mem_gb,
+                )
+                for chunk_start in range(0, data.shape[1], chunk_size)
+            ]
+            mallet_paths = ray.get(_futures)
+
+            # run the inference in parallel for each inferencer on each chunk
+            total_futures = {}
+            for model_temp_dir, inferencer_path in model_dict.items():
+                futures = [
+                    remote_infer.remote(
+                        mallet_path=mallet_path,
+                        inferencer_path=inferencer_path,
+                        temp_prefix=f"{model_temp_dir}/{Path(mallet_path).stem}",
+                        topic_threshold=topic_threshold,
+                        num_iterations=num_iterations,
+                        random_seed=random_seed,
+                        mem_gb=mem_gb,
+                    )
+                    for mallet_path in mallet_paths
+                ]
+                total_futures[model_temp_dir] = futures
+
+            # get the results
+            results = {}
+            for model_temp_dir, futures in total_futures.items():
+                num_topics = int(Path(model_temp_dir).name.split("_")[0][5:])
+                doc_topic = np.concatenate(ray.get(futures), axis=0)
+                doc_topic = pd.DataFrame(
+                    doc_topic,
+                    index=cell_names,
+                    columns=[f"topic{i}" for i in range(doc_topic.shape[1])],
+                )
+                results[num_topics] = doc_topic
+        return results
+
+    def infer_adata(self, adata, use_num_topics, binarize=False, **infer_kwargs):
+        """
+        Infer topics for AnnData object.
+
+        Parameters
+        ----------
+        adata : AnnData
+            AnnData object containing the new data.
+        use_num_topics : List[int]
+            List of number of topics to use in the model.
+        infer_kwargs : Dict
+            Additional keyword arguments for :meth:`parallel_infer`.
+
+        Returns
+        -------
+        Dict
+            Dictionary of inferred topics for each number of topics.
+        """
+        data = adata.X.T
+        results = self.parallel_infer(data, use_num_topics, **infer_kwargs)
+        if binarize:
+            binary_results = {}
+            for num_topics, doc_topic in results.items():
+                binary_results[num_topics] = binarize_topics(doc_topic, nbins=100)
+            results = binary_results
+
+        for num_topics, doc_topic in results.items():
+            adata.obsm[f"topic{num_topics}"] = doc_topic.values
+        return
