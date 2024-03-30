@@ -10,6 +10,7 @@ def get_mallet_path():
         print(
             "LDA package Mallet not found. Please install it with `conda install -c conda-forge mallet` or `mamba install -c conda-forge mallet`"
         )
+        exit(1)
     return path.strip()
 
 
