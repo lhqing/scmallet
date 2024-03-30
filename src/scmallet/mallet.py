@@ -307,7 +307,7 @@ class Mallet:
         temp_path = path.with_name(path.name + ".temp")
         binarized = binarize_topics(df, nbins=100)
         binarized.reset_index().to_feather(temp_path)
-        self._temp_to_final(temp_path)
+        temp_path.rename(path)
         return
 
     def get_cell_topics(self, num_topics: int, renew=False) -> pd.DataFrame:
