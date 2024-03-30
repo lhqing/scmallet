@@ -415,74 +415,75 @@ class Mallet:
         if not self.trained:
             raise ValueError(f"No trained model found at {self.output_dir}")
 
-        # with tempfile.TemporaryDirectory(prefix="bolero_") as parent_temp_dir:
-        parent_temp_dir = tempfile.mkdtemp(prefix="bolero_")
-        actual_train_mallet = Path(self.train_mallet_file)
-        temp_mallet_path = Path(f"{parent_temp_dir}/{actual_train_mallet.name}")
-        # copy the mallet file to temp path and make it read only
-        subprocess.run(["cp", actual_train_mallet, temp_mallet_path], check=True)
+        with tempfile.TemporaryDirectory(prefix="bolero_") as parent_temp_dir:
+            actual_train_mallet = Path(self.train_mallet_file)
+            temp_mallet_path = Path(f"{parent_temp_dir}/{actual_train_mallet.name}")
+            # copy the mallet file to temp path and make it read only
+            subprocess.run(["cp", actual_train_mallet, temp_mallet_path], check=True)
+            # make temp_mallet_path read only
+            temp_mallet_path.chmod(0o444)
 
-        if use_num_topics is not None:
-            use_num_topics = set(use_num_topics) & self.trained_num_topics
-        else:
-            use_num_topics = self.trained_num_topics
+            if use_num_topics is not None:
+                use_num_topics = set(use_num_topics) & self.trained_num_topics
+            else:
+                use_num_topics = self.trained_num_topics
 
-        model_dict = {}
-        for num_topics in use_num_topics:
-            model_temp_dir = tempfile.mkdtemp(dir=parent_temp_dir, prefix=f"topic{num_topics}_")
-            model_dict[model_temp_dir] = self._get_topic_inferencer_path(num_topics)
+            model_dict = {}
+            for num_topics in use_num_topics:
+                model_temp_dir = tempfile.mkdtemp(dir=parent_temp_dir, prefix=f"topic{num_topics}_")
+                model_dict[model_temp_dir] = self._get_topic_inferencer_path(num_topics)
 
-        data, cell_names, _ = prepare_binary_matrix(data)
-        data_remote = ray.put(data)
+            data, cell_names, _ = prepare_binary_matrix(data)
+            data_remote = ray.put(data)
 
-        # get the number of cpu available and adjust the chunk size
-        n_cpu = int(ray.available_resources()["CPU"])
-        chunk_size = max(100, (data.shape[1] + n_cpu) // int(n_cpu / 2))
+            # get the number of cpu available and adjust the chunk size
+            n_cpu = int(ray.available_resources()["CPU"])
+            chunk_size = max(100, (data.shape[1] + n_cpu) // int(n_cpu / 2))
 
-        # convert input for each model, this is required as the train_mallet and train_id2word files are different for each model
-        futures = {}
-        _futures = [
-            remote_convert_input.remote(
-                data=data_remote,
-                temp_dir=model_temp_dir,
-                chunk_start=chunk_start,
-                chunk_end=min(chunk_start + chunk_size, data.shape[1]),
-                train_mallet_file=temp_mallet_path,
-                train_id2word_file=self.train_id2word_file,
-                mem_gb=mem_gb,
-            )
-            for chunk_start in range(0, data.shape[1], chunk_size)
-        ]
-        mallet_paths = ray.get(_futures)
-
-        # run the inference in parallel for each inferencer on each chunk
-        total_futures = {}
-        for model_temp_dir, inferencer_path in model_dict.items():
-            futures = [
-                remote_infer.remote(
-                    mallet_path=mallet_path,
-                    inferencer_path=inferencer_path,
-                    temp_prefix=f"{model_temp_dir}/{Path(mallet_path).stem}",
-                    topic_threshold=topic_threshold,
-                    num_iterations=num_iterations,
-                    random_seed=random_seed,
+            # convert input for each model, this is required as the train_mallet and train_id2word files are different for each model
+            futures = {}
+            _futures = [
+                remote_convert_input.remote(
+                    data=data_remote,
+                    temp_dir=model_temp_dir,
+                    chunk_start=chunk_start,
+                    chunk_end=min(chunk_start + chunk_size, data.shape[1]),
+                    train_mallet_file=temp_mallet_path,
+                    train_id2word_file=self.train_id2word_file,
                     mem_gb=mem_gb,
                 )
-                for mallet_path in mallet_paths
+                for chunk_start in range(0, data.shape[1], chunk_size)
             ]
-            total_futures[model_temp_dir] = futures
+            mallet_paths = ray.get(_futures)
 
-        # get the results
-        results = {}
-        for model_temp_dir, futures in total_futures.items():
-            num_topics = int(Path(model_temp_dir).name.split("_")[0][5:])
-            doc_topic = np.concatenate(ray.get(futures), axis=0)
-            doc_topic = pd.DataFrame(
-                doc_topic,
-                index=cell_names,
-                columns=[f"topic{i}" for i in range(doc_topic.shape[1])],
-            )
-            results[num_topics] = doc_topic
+            # run the inference in parallel for each inferencer on each chunk
+            total_futures = {}
+            for model_temp_dir, inferencer_path in model_dict.items():
+                futures = [
+                    remote_infer.remote(
+                        mallet_path=mallet_path,
+                        inferencer_path=inferencer_path,
+                        temp_prefix=f"{model_temp_dir}/{Path(mallet_path).stem}",
+                        topic_threshold=topic_threshold,
+                        num_iterations=num_iterations,
+                        random_seed=random_seed,
+                        mem_gb=mem_gb,
+                    )
+                    for mallet_path in mallet_paths
+                ]
+                total_futures[model_temp_dir] = futures
+
+            # get the results
+            results = {}
+            for model_temp_dir, futures in total_futures.items():
+                num_topics = int(Path(model_temp_dir).name.split("_")[0][5:])
+                doc_topic = np.concatenate(ray.get(futures), axis=0)
+                doc_topic = pd.DataFrame(
+                    doc_topic,
+                    index=cell_names,
+                    columns=[f"topic{i}" for i in range(doc_topic.shape[1])],
+                )
+                results[num_topics] = doc_topic
         return results
 
     def infer_adata(self, adata, use_num_topics=None, binarize=False, **infer_kwargs):
