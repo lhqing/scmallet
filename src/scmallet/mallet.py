@@ -9,8 +9,14 @@ import ray
 from gensim import utils
 from gensim.utils import revdict
 
+from .binarize import binarize_topics
 from .input import convert_input, prepare_binary_matrix
 from .utils import MALLET_COMMAND_MAP, MALLET_JAVA_BASE
+
+
+@ray.remote
+def _do_nothing(num_topics):
+    return num_topics
 
 
 class Mallet:
@@ -186,20 +192,23 @@ class Mallet:
         ray.Task
             Ray task to train the model.
         """
-        previous_state_path = self._get_topic_state_path(num_topics)
-        state_path = self._get_topic_state_path(num_topics, temp=True)
-        doctopics_path = self._get_topic_doctopics_path(num_topics, temp=True)
-        inferencer_path = self._get_topic_inferencer_path(num_topics, temp=True)
-        topickeys_path = self._get_topic_topickeys_path(num_topics, temp=True)
         flag_path = self._get_train_flag_path(num_topics)
 
         # record number of iterations trained in total
         if flag_path.exists():
             with open(flag_path) as fin:
                 cur_cycle = int(fin.read())
+                if cur_cycle >= iterations:
+                    return _do_nothing.remote(num_topics)
         else:
             cur_cycle = 0
         optimize_burn_in = max(0, optimize_burn_in - cur_cycle)
+
+        previous_state_path = self._get_topic_state_path(num_topics)
+        state_path = self._get_topic_state_path(num_topics, temp=True)
+        doctopics_path = self._get_topic_doctopics_path(num_topics, temp=True)
+        inferencer_path = self._get_topic_inferencer_path(num_topics, temp=True)
+        topickeys_path = self._get_topic_topickeys_path(num_topics, temp=True)
 
         _mallet_cmd = "train-topics"
         _mallet_cmd_base = MALLET_JAVA_BASE.format(mem_gb=mem_gb, mallet_cmd=MALLET_COMMAND_MAP[_mallet_cmd])
@@ -227,7 +236,7 @@ class Mallet:
         )
 
         @ray.remote(num_cpus=n_cpu)
-        def _train_worker(cmd, flag_path, iterations, temp_paths):
+        def _train_worker(cmd, flag_path, iterations, num_topics, temp_paths):
             print("Running command:", cmd)
             try:
                 subprocess.check_output(args=shlex.split(cmd), shell=False, stderr=subprocess.STDOUT)
@@ -250,8 +259,13 @@ class Mallet:
             return num_topics
 
         _temp_paths = [state_path, doctopics_path, inferencer_path, topickeys_path]
-        task = _train_worker.remote(cmd, flag_path, iterations, _temp_paths)
-        # task = _train_worker(cmd, flag_path, iterations)
+        task = _train_worker.remote(
+            cmd=cmd,
+            flag_path=flag_path,
+            iterations=iterations,
+            num_topics=num_topics,
+            temp_paths=_temp_paths,
+        )
         return task
 
     def _load_word_topics(self, num_topics):
@@ -284,6 +298,14 @@ class Mallet:
                 word_topics[int(topic), tokenid] += 1.0
         return word_topics
 
+    def _save_binarized_topics(self, df, path):
+        """Binarize topic probabilities and save to file."""
+        temp_path = path.with_name(path.name + ".temp")
+        binarized = binarize_topics(df, nbins=100)
+        binarized.reset_index().to_feather(temp_path)
+        self._temp_to_final(temp_path)
+        return
+
     def get_cell_topics(self, num_topics: int, renew=False) -> pd.DataFrame:
         """
         Get cell-by-topic dataframe.
@@ -305,13 +327,16 @@ class Mallet:
 
         temp_path = self._get_train_cell_topics_path(num_topics, temp=True)
         doctopics_path = self._get_topic_doctopics_path(num_topics)
-        doc_topic = pd.read_csv(doctopics_path, header=None, sep="\t").iloc[:, 2:]
-        doc_topic.index = self.train_cell_names
-        doc_topic.index.name = "cell"
-        doc_topic.columns = [f"topic{i}" for i in range(num_topics)]
-        doc_topic.reset_index().to_feather(temp_path)
-        self._temp_to_final(temp_path)
-        return doc_topic
+        cell_by_topic = pd.read_csv(doctopics_path, header=None, sep="\t").iloc[:, 2:]
+        cell_by_topic.index = self.train_cell_names
+        cell_by_topic.index.name = "cell"
+        cell_by_topic.columns = [f"topic{i}" for i in range(num_topics)]
+        cell_by_topic.reset_index().to_feather(temp_path)
+        path = self._temp_to_final(temp_path)
+
+        binarized_path = path.with_name(path.name[:-7] + "_binarized.feather")
+        self._save_binarized_topics(cell_by_topic, path=binarized_path)
+        return cell_by_topic
 
     def get_region_topics(self, num_topics: int, renew=False) -> pd.DataFrame:
         """
@@ -341,7 +366,10 @@ class Mallet:
         region_by_topic.columns = [f"topic{i}" for i in range(num_topics)]
         temp_path = self._get_train_region_topics_path(num_topics, temp=True)
         region_by_topic.reset_index().to_feather(temp_path)
-        self._temp_to_final(temp_path)
+        path = self._temp_to_final(temp_path)
+
+        binarized_path = path.with_name(path.name[:-7] + "_binarized.feather")
+        self._save_binarized_topics(region_by_topic, path=binarized_path)
         return region_by_topic
 
     def _post_fit(self):

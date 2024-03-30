@@ -63,10 +63,13 @@ def convert_input(
         # each parallel process will try to write to the same file and the mallet command will fail
         # also in our usecase the mallet file does not need to be updated if the model is already trained
         # also, chmod will not work in gcsfuse mounted directories, the current solution is to copy the file to a temp file
+        # get current permissions of the file
+        _cur_permissions = train_mallet_path.stat().st_mode
         train_mallet_path.chmod(0o444)
         id2word_path = pathlib.Path(train_id2word_file)
         id2word = joblib.load(id2word_path)
     else:
+        _cur_permissions = None
         trained = False
         names_dict = {x: str(x) for x in range(data.shape[0])}
         id2word = corpora.Dictionary.from_corpus(corpus, names_dict)
@@ -79,9 +82,13 @@ def convert_input(
 
     if trained:
         if mallet_path.exists():
+            if _cur_permissions is not None:
+                train_mallet_path.chmod(_cur_permissions)
             return mallet_path, id2word_path
     else:
         if mallet_path.exists() and id2word_path.exists():
+            if _cur_permissions is not None:
+                train_mallet_path.chmod(_cur_permissions)
             return mallet_path, id2word_path
 
     with utils.open(txt_path, "wb") as fout:
@@ -127,6 +134,8 @@ def convert_input(
         # otherwise the id2word file will be the same as the train_id2word_file
 
     temp_mallet_path.rename(mallet_path)
+    if _cur_permissions is not None:
+        train_mallet_path.chmod(_cur_permissions)
     return mallet_path, id2word_path
 
 
