@@ -21,6 +21,7 @@ def convert_input(
     train_mallet_file: Union[str, Path] = None,
     train_id2word_file: Union[str, Path] = None,
     mem_gb: int = 4,
+    binarize_data=False,
 ):
     """
     Convert sparse.csc_matrix to Mallet format and save it to a binary file, also save the id2word dictionary.
@@ -49,6 +50,9 @@ def convert_input(
         raise ValueError("data should be a sparse matrix")
     if not isinstance(data, csc_matrix):
         data = data.tocsc()
+
+    if binarize_data:
+        data.data = np.ones_like(data.data, dtype=bool)
 
     corpus = matutils.Sparse2Corpus(data)
 

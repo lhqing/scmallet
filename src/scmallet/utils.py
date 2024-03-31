@@ -8,7 +8,9 @@ def get_mallet_path():
         path = subprocess.check_output(["which", "mallet"], encoding="utf8")
     except subprocess.CalledProcessError:
         print(
-            "LDA package Mallet not found. Please install it with `conda install -c conda-forge mallet` or `mamba install -c conda-forge mallet`"
+            "LDA package Mallet not found. "
+            "Please install it with `conda install -c conda-forge mallet` "
+            "or `mamba install -c conda-forge mallet`"
         )
         exit(1)
     return path.strip()
