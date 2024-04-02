@@ -4,8 +4,14 @@ __version__ = version("scmallet")
 
 from .binarize import binarize_topics
 from .mallet import Mallet
+from .topic_metrices import (
+    corr_array,
+    corr_rows,
+    dice_score_array,
+    dice_score_rows,
+)
 
 # TODO
-# infer topics and add to adata
-# combine or select redudant topics when given multiple topic models
 # generate pseudo-bulk and region bag
+# write tests
+# write documentation on README
