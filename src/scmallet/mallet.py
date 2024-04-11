@@ -336,7 +336,7 @@ class Mallet:
         random_seed: int = 555,
         n_cpu: int = 8,
         mem_gb: int = 16,
-    ) -> ray.Task:
+    ) -> ray.ObjectRef:
         """
         Train Mallet LDA.
 
@@ -365,8 +365,8 @@ class Mallet:
 
         Returns
         -------
-        ray.Task
-            Ray task to train the model.
+        ray.ObjectRef
+            Ray object reference to the training task.
         """
         flag_path = self._get_train_flag_path(num_topics)
 
@@ -418,7 +418,7 @@ class Mallet:
             iterations: int,
             num_topics: int,
             temp_paths: list[Path],
-        ) -> ray.Task:
+        ) -> ray.ObjectRef:
             print("Running command:", cmd)
             try:
                 subprocess.check_output(args=shlex.split(cmd), shell=False, stderr=subprocess.STDOUT)
