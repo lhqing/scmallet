@@ -20,7 +20,7 @@ def convert_input(
     output_prefix: str,
     train_mallet_file: Union[str, Path] = None,
     train_id2word_file: Union[str, Path] = None,
-    mem_gb: int = 4,
+    mem_gb: int = 16,
     binarize_data=False,
 ):
     """

@@ -121,7 +121,7 @@ class Mallet:
         if data is not None:
             data, self.train_cell_names, self.train_region_names = prepare_binary_matrix(data)
             self.train_mallet_file, self.train_id2word_file = convert_input(
-                data=data, output_prefix=self.train_prefix, mem_gb=4
+                data=data, output_prefix=self.train_prefix, mem_gb=mem_gb
             )
         else:
             assert self.trained, "No data provided and no trained model found"

@@ -16,7 +16,7 @@ def remote_convert_input(
     temp_dir: str,
     train_mallet_file: str,
     train_id2word_file: str,
-    mem_gb=4,
+    mem_gb: int = 16,
 ):
     """Convert sparse.csc_matrix to Mallet format and save it to a binary file, also save the id2word dictionary. Ray version."""
     # get a random dir to save the mallet files
