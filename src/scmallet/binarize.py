@@ -111,6 +111,9 @@ def binarize_topics(
     Rouchon, Q. and Verbeiren, T., 2020. A scalable SCENIC workflow for single-cell gene regulatory network analysis. Nature Protocols,
     15(7), pp.2247-2276.
     """
+    if isinstance(topic_dist, np.ndarray):
+        topic_dist = pd.DataFrame(topic_dist)
+
     # smooth topics:
     topic_dist = _smooth_topics_f(topic_dist)
 
