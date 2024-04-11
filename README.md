@@ -21,6 +21,10 @@ pip install scmallet
 pip install git+https://github.com/lhqing/scmallet.git@main
 ```
 
+## Usage
+
+See example usage here: https://github.com/lhqing/scmallet/blob/main/tests/example.ipynb
+
 ## Citation
 
 -   Mallet Package: https://mimno.github.io/Mallet/
