@@ -2,13 +2,16 @@ import shlex
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Optional, Union
 
+import anndata
 import joblib
 import numpy as np
 import pandas as pd
 import ray
 from gensim import utils
 from gensim.utils import revdict
+from scipy.sparse import csc_matrix
 
 from .binarize import binarize_topics
 from .infer import remote_convert_input, remote_infer
@@ -22,16 +25,36 @@ def _do_nothing(num_topics, renew):
 
 
 class Mallet:
-    """Mallet LDA model wrapper."""
+    """
+    A wrapper for the Mallet LDA model.
 
-    def __init__(self, output_dir) -> None:
+    Attributes
+    ----------
+        output_dir (Path): The directory where the output files will be stored.
+        train_prefix (str): The prefix for the training files.
+        train_mallet_file (Optional[Path]): The path to the training mallet file.
+        train_id2word_file (Optional[Path]): The path to the training id2word file.
+        trained (bool): A flag indicating whether the model has been trained.
+        _id2word (Optional[dict]): The id2word mapping after training.
+        trained_num_topics (Set[int]): The number of topics trained.
+        train_cell_names (Optional[any]): The cell names used in training.
+        train_region_names (Optional[any]): The region names used in training.
+    """
+
+    def __init__(self, output_dir: Union[str, Path]) -> None:
+        """
+        Initializes the Mallet wrapper.
+
+        Args:
+            output_dir (Union[str, Path]): The directory where the output files will be stored.
+        """
         self.output_dir = Path(output_dir).resolve().absolute()
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Train files
         self.train_prefix = str(self.output_dir / "train")
-        self.train_mallet_file = Path(f"{self.train_prefix}_corpus.mallet")
-        self.train_id2word_file = Path(f"{self.train_prefix}_corpus.id2word")
+        self.train_mallet_file: Optional[Path] = Path(f"{self.train_prefix}_corpus.mallet")
+        self.train_id2word_file: Optional[Path] = Path(f"{self.train_prefix}_corpus.id2word")
         if not self.train_mallet_file.exists() and not self.train_id2word_file.exists():
             self.trained = False
             self.train_mallet_file = None
@@ -40,16 +63,22 @@ class Mallet:
             self.trained = True
 
         # Model parameters after training
-        self._id2word = None
-        self.trained_num_topics = set()
+        self._id2word: Optional[dict] = None
+        self.trained_num_topics: set[int] = set()
         self.train_cell_names = None
         self.train_region_names = None
         if self.trained:
             self._post_fit()
 
     @property
-    def id2word(self):
-        """Get the id2word dictionary."""
+    def id2word(self) -> Optional[dict]:
+        """
+        Get the id2word dictionary.
+
+        Returns
+        -------
+            Optional[dict]: The id2word dictionary if it exists, None otherwise.
+        """
         if self._id2word is None:
             try:
                 self._id2word = joblib.load(self.train_id2word_file)
@@ -58,26 +87,33 @@ class Mallet:
         return self._id2word
 
     @property
-    def num_terms(self):
-        """Get the number of terms in the id2word dictionary."""
+    def num_terms(self) -> int:
+        """
+        Get the number of terms in the id2word dictionary.
+
+        Returns
+        -------
+            int: The number of terms in the id2word dictionary.
+        """
         return 1 + max(self.id2word.keys())
 
-    def fit(self, num_topics, data=None, cpu_per_task=8, mem_gb=16, **train_kwargs):
+    def fit(
+        self,
+        num_topics: list[int],
+        data: Optional[csc_matrix] = None,
+        cpu_per_task: int = 8,
+        mem_gb: int = 16,
+        **train_kwargs,
+    ) -> None:
         """
         Train Mallet LDA with multiple number of topics.
 
-        Parameters
-        ----------
-        num_topics: List[int]
-            List of number of topics to train.
-        data: csc_matrix
-            Binary matrix containing cells/documents as columns and regions/words as rows.
-        cpu_per_task: int, optional
-            Number of CPU to use per task. Default: 8.
-        mem_gb: int, optional
-            Memory to use in GB. Default: 16.
-        train_kwargs: Dict
-            Additional keyword arguments for :meth:`train`.
+        Args:
+            num_topics (List[int]): List of number of topics to train.
+            data (Optional[csc_matrix]): Binary matrix containing cells/documents as columns and regions/words as rows.
+            cpu_per_task (int, optional): Number of CPU to use per task. Default: 8.
+            mem_gb (int, optional): Memory to use in GB. Default: 16.
+            **train_kwargs: Additional keyword arguments for the training. See :meth:`train`.
         """
         train_kwargs["n_cpu"] = cpu_per_task
         train_kwargs["mem_gb"] = mem_gb
@@ -112,36 +148,173 @@ class Mallet:
         self._post_fit()
         return
 
-    def _get_topic_path(self, num_topics, name, temp):
+    def _get_topic_path(self, num_topics: int, name: str, temp: bool) -> Path:
+        """
+        Get the path for a specific topic file.
+
+        Parameters
+        ----------
+        num_topics : int
+            The number of topics.
+        name : str
+            The name of the file.
+        temp : bool
+            Whether the file is temporary or not.
+
+        Returns
+        -------
+        Path
+            The path to the topic file.
+        """
         temp_suffix = "_temp" if temp else ""
         return Path(f"{self.output_dir}/topic{num_topics}/topic{num_topics}_{name}{temp_suffix}")
 
-    def _get_topic_state_path(self, num_topics, temp=False):
+    def _get_topic_state_path(self, num_topics: int, temp: bool = False) -> Path:
+        """
+        Get the path for the state file of a specific number of topics.
+
+        Parameters
+        ----------
+        num_topics : int
+            The number of topics.
+        temp : bool, optional
+            Whether the file is temporary or not. Default is False.
+
+        Returns
+        -------
+        Path
+            The path to the state file.
+        """
         return self._get_topic_path(num_topics, "state.mallet.gz", temp)
 
-    def _get_topic_doctopics_path(self, num_topics, temp=False):
+    def _get_topic_doctopics_path(self, num_topics: int, temp: bool = False) -> Path:
+        """
+        Get the path for the doctopics file of a specific number of topics.
+
+        Parameters
+        ----------
+        num_topics : int
+            The number of topics.
+        temp : bool, optional
+            Whether the file is temporary or not. Default is False.
+
+        Returns
+        -------
+        Path
+            The path to the doctopics file.
+        """
         return self._get_topic_path(num_topics, "doctopics.txt", temp)
 
-    def _get_topic_inferencer_path(self, num_topics, temp=False):
+    def _get_topic_inferencer_path(self, num_topics: int, temp: bool = False) -> Path:
+        """
+        Get the path for the inferencer file of a specific number of topics.
+
+        Parameters
+        ----------
+        num_topics : int
+            The number of topics.
+        temp : bool, optional
+            Whether the file is temporary or not. Default is False.
+
+        Returns
+        -------
+        Path
+            The path to the inferencer file.
+        """
         return self._get_topic_path(num_topics, "inferencer.mallet", temp)
 
-    def _get_topic_topickeys_path(self, num_topics, temp=False):
+    def _get_topic_topickeys_path(self, num_topics: int, temp: bool = False) -> Path:
+        """
+        Get the path for the topickeys file of a specific number of topics.
+
+        Parameters
+        ----------
+        num_topics : int
+            The number of topics.
+        temp : bool, optional
+            Whether the file is temporary or not. Default is False.
+
+        Returns
+        -------
+        Path
+            The path to the topickeys file.
+        """
         return self._get_topic_path(num_topics, "topickeys.txt", temp)
 
-    def _get_train_flag_path(self, num_topics):
+    def _get_train_flag_path(self, num_topics: int) -> Path:
+        """
+        Get the path for the train flag file of a specific number of topics.
+
+        Parameters
+        ----------
+        num_topics : int
+            The number of topics.
+
+        Returns
+        -------
+        Path
+            The path to the train flag file.
+        """
         return self._get_topic_path(num_topics, "train_flag.txt", temp=False)
 
-    def _get_train_cell_topics_path(self, num_topics, temp=False, binary=False):
+    def _get_train_cell_topics_path(self, num_topics: int, temp: bool = False, binary: bool = False) -> Path:
+        """
+        Get the path for the cell topics file of a specific number of topics.
+
+        Parameters
+        ----------
+        num_topics : int
+            The number of topics.
+        temp : bool, optional
+            Whether the file is temporary or not. Default is False.
+        binary : bool, optional
+            Whether the file is binary or not. Default is False.
+
+        Returns
+        -------
+        Path
+            The path to the cell topics file.
+        """
         binary_str = "_binarized" if binary else ""
         return self._get_topic_path(num_topics, f"cell_topics{binary_str}.feather", temp=temp)
 
-    def _get_train_region_topics_path(self, num_topics, temp=False, binary=False):
+    def _get_train_region_topics_path(self, num_topics: int, temp: bool = False, binary: bool = False) -> Path:
+        """
+        Get the path for the region topics file of a specific number of topics.
+
+        Parameters
+        ----------
+        num_topics : int
+            The number of topics.
+        temp : bool, optional
+            Whether the file is temporary or not. Default is False.
+        binary : bool, optional
+            Whether the file is binary or not. Default is False.
+
+        Returns
+        -------
+        Path
+            The path to the region topics file.
+        """
         binary_str = "_binarized" if binary else ""
         return self._get_topic_path(num_topics, f"region_topics{binary_str}.feather", temp=temp)
 
-    def _temp_to_final(self, path):
+    def _temp_to_final(self, path: str) -> Optional[Path]:
+        """
+        Convert a temporary file path to its final path.
+
+        Parameters
+        ----------
+        path : str
+            The path of the file.
+
+        Returns
+        -------
+        Optional[Path]
+            The final path of the file, or None if the file does not exist.
+        """
         if not Path(path).exists():
-            return
+            return None
         path = str(path)
         if path.endswith("_temp"):
             final_path = Path(path[:-5])
@@ -153,43 +326,41 @@ class Mallet:
 
     def train(
         self,
-        num_topics,
-        alpha=50,
-        beta=0.1,
-        optimize_interval=0,
-        optimize_burn_in=200,
-        topic_threshold=0.0,
-        iterations=300,
-        random_seed=555,
-        n_cpu=8,
-        mem_gb=16,
-    ):
+        num_topics: int,
+        alpha: float = 50,
+        beta: float = 0.1,
+        optimize_interval: int = 0,
+        optimize_burn_in: int = 200,
+        topic_threshold: float = 0.0,
+        iterations: int = 300,
+        random_seed: int = 555,
+        n_cpu: int = 8,
+        mem_gb: int = 16,
+    ) -> ray.Task:
         """
         Train Mallet LDA.
 
         Parameters
         ----------
-        output_prefix: str
-            Prefix to save the output files.
-        num_topics: int
+        num_topics : int
             The number of topics to use in the model.
-        input_state: str, optional
-            Path to the state file to use as input. Default: None.
-        alpha: float, optional
+        alpha : float, optional
             alpha value for mallet train-topics. Default: 50.
-        eta: float, optional
+        beta : float, optional
             beta value for mallet train-topics. Default: 0.1.
         optimize_interval : int, optional
             Optimize hyperparameters every `optimize_interval` iterations (sometimes leads to Java exception 0 to switch off hyperparameter optimization). Default: 0.
+        optimize_burn_in : int, optional
+            Number of iterations to run before starting hyperparameter optimization. Default: 200.
         topic_threshold : float, optional
             Threshold of the probability above which we consider a topic. Default: 0.0.
         iterations : int, optional
-            Number of training iterations. Default: 150.
-        random_seed: int, optional
+            Number of training iterations. Default: 300.
+        random_seed : int, optional
             Random seed to ensure consistent results, if 0 - use system clock. Default: 555.
         n_cpu : int, optional
-            Number of threads that will be used for training. Default: 1.
-        mem_gb: int, optional
+            Number of threads that will be used for training. Default: 8.
+        mem_gb : int, optional
             Memory to use in GB. Default: 16.
 
         Returns
@@ -241,7 +412,13 @@ class Mallet:
         )
 
         @ray.remote(num_cpus=n_cpu)
-        def _train_worker(cmd, flag_path, iterations, num_topics, temp_paths):
+        def _train_worker(
+            cmd: str,
+            flag_path: Path,
+            iterations: int,
+            num_topics: int,
+            temp_paths: list[Path],
+        ) -> ray.Task:
             print("Running command:", cmd)
             try:
                 subprocess.check_output(args=shlex.split(cmd), shell=False, stderr=subprocess.STDOUT)
@@ -275,9 +452,14 @@ class Mallet:
         )
         return task
 
-    def _load_word_topics(self, num_topics):
+    def _load_word_topics(self, num_topics: int) -> np.ndarray:
         """
         Load words X topics matrix from :meth:`gensim.models.wrappers.LDAMallet.LDAMallet.fstate` file.
+
+        Parameters
+        ----------
+        num_topics : int
+            The number of topics.
 
         Returns
         -------
@@ -305,15 +487,24 @@ class Mallet:
                 word_topics[int(topic), tokenid] += 1.0
         return word_topics
 
-    def _save_binarized_topics(self, df, path):
-        """Binarize topic probabilities and save to file."""
+    def _save_binarized_topics(self, df: pd.DataFrame, path: Path) -> None:
+        """
+        Binarize topic probabilities and save to file.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The dataframe containing topic probabilities.
+        path : Path
+            The path to save the binarized topics.
+        """
         temp_path = path.with_name(path.name + ".temp")
         binarized = binarize_topics(df, nbins=100)
         binarized.reset_index().to_feather(temp_path)
         temp_path.rename(path)
         return
 
-    def get_cell_topics(self, num_topics: int, renew=False) -> pd.DataFrame:
+    def get_cell_topics(self, num_topics: int, renew: bool = False) -> pd.DataFrame:
         """
         Get cell-by-topic dataframe.
 
@@ -321,6 +512,8 @@ class Mallet:
         ----------
         num_topics : int
             Number of topics.
+        renew : bool, optional
+            Whether to renew the dataframe if it already exists. Default is False.
 
         Returns
         -------
@@ -345,7 +538,7 @@ class Mallet:
         self._save_binarized_topics(cell_by_topic, path=binarized_path)
         return cell_by_topic
 
-    def get_region_topics(self, num_topics: int, renew=False) -> pd.DataFrame:
+    def get_region_topics(self, num_topics: int, renew: bool = False) -> pd.DataFrame:
         """
         Get region-by-topic dataframe and normalize by region's topic sum.
 
@@ -353,6 +546,8 @@ class Mallet:
         ----------
         num_topics : int
             Number of topics.
+        renew : bool, optional
+            Whether to renew the dataframe if it already exists. Default is False.
 
         Returns
         -------
@@ -380,6 +575,13 @@ class Mallet:
         return region_by_topic
 
     def _post_fit(self):
+        """
+        Perform post-processing after fitting the model.
+
+        Returns
+        -------
+            None
+        """
         self.trained = True
         # scan output dir and get trained topics
         for topic_dir in self.output_dir.glob("topic*"):
@@ -389,28 +591,28 @@ class Mallet:
 
     def parallel_infer(
         self,
-        data,
-        use_num_topics=None,
-        topic_threshold=0.0,
-        num_iterations=300,
-        random_seed=555,
-        mem_gb=16,
-    ):
+        data: csc_matrix,
+        use_num_topics: Optional[set[int]] = None,
+        topic_threshold: float = 0.0,
+        num_iterations: int = 300,
+        random_seed: int = 555,
+        mem_gb: int = 16,
+    ) -> dict[int, pd.DataFrame]:
         """
         Infer topics for new data in parallel.
 
         Parameters
         ----------
-        data: sparse.csr_matrix
-            Binary matrix containing cell/document as columns and regions/words as rows.
-        topic_threshold : float, optional
-            Threshold of the probability above which we consider a topic. Default: 0.0.
-        num_iterations : int, optional
-            Number of training iterations. Default: 300.
-        random_seed: int, optional
-            Random seed to ensure consistent results. Default: 555.
-        mem_gb: int, optional
-            Memory to use in GB. Default: 16.
+            data (csc_matrix): Binary matrix containing cell/document as columns and regions/words as rows.
+            use_num_topics (Optional[Set[int]]): List of number of topics to use in the model.
+            topic_threshold (float): Threshold of the probability above which we consider a topic. Default: 0.0.
+            num_iterations (int): Number of training iterations. Default: 300.
+            random_seed (int): Random seed to ensure consistent results. Default: 555.
+            mem_gb (int): Memory to use in GB. Default: 16.
+
+        Returns
+        -------
+            Dict[int, pd.DataFrame]: Dictionary of inferred topics for each number of topics.
         """
         if not self.trained:
             raise ValueError(f"No trained model found at {self.output_dir}")
@@ -486,26 +688,27 @@ class Mallet:
                 results[num_topics] = doc_topic
         return results
 
-    def infer_adata(self, adata, use_num_topics=None, binarize=False, **infer_kwargs):
+    def infer_adata(
+        self,
+        adata: anndata.AnnData,
+        use_num_topics: Optional[list[int]] = None,
+        binarize: bool = False,
+        **infer_kwargs: dict,
+    ) -> None:
         """
         Infer topics for AnnData object.
 
         Parameters
         ----------
-        adata : AnnData
-            AnnData object containing the new data.
-        use_num_topics : List[int]
-            List of number of topics to use in the model.
-        infer_kwargs : Dict
-            Additional keyword arguments for :meth:`parallel_infer`.
+            adata (anndata.AnnData): AnnData object containing the new data.
+            use_num_topics (Optional[List[int]]): List of number of topics to use in the model.
+            binarize (bool): Whether to binarize the inferred topics. Default: False.
+            infer_kwargs (Dict): Additional keyword arguments for parallel_infer.
 
         Returns
         -------
-        Dict
-            Dictionary of inferred topics for each number of topics.
+            None
         """
-        import anndata
-
         assert isinstance(adata, anndata.AnnData), "adata must be an AnnData object"
 
         results = self.parallel_infer(adata, use_num_topics, **infer_kwargs)
