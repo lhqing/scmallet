@@ -1,6 +1,13 @@
 # scmallet
 
-Python wrapper of MALLET for LDA analysis on single-cell data
+Python wrapper of MALLET for LDA analysis on single-cell data.
+
+MALLET is the LDA backend chosen by pycistopic. The implementation in this package has several difference than pycistopic:
+
+1. improved paralization.
+2. Allow train LDA model with cell subset and then parallel inference ramaining cells. This is nicely supported by MALLET itself.
+3. Allow the training process to be resumable/restartable.
+4. Work with anndata.
 
 ## Installation
 
