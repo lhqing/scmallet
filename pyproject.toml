@@ -22,6 +22,7 @@ dependencies = [
     "numpy",
     "pandas",
     "gensim",
+    "scipy<1.13",
     "pyranges",
 ]
 
