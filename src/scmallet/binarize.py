@@ -14,9 +14,12 @@ def _norm_topics(x):
     return x * (np.log(x + 1e-100) - np.sum(np.log(x + 1e-100)) / len(x))
 
 
-def _smooth_topics_f(topic_table: pd.DataFrame):
+def smooth_and_scale_topics(topic_table: pd.DataFrame):
     topic_table_np = np.apply_along_axis(_norm_topics, 1, topic_table.values)
-    topic_table = pd.DataFrame(topic_table_np, index=topic_table.index, columns=topic_table.columns)
+    topic_table = pd.DataFrame(
+        topic_table_np, index=topic_table.index, columns=topic_table.columns
+    )
+    topic_table = topic_table.apply(lambda l: (l - np.min(l)) / np.ptp(l), axis=0)
     return topic_table
 
 
@@ -115,15 +118,12 @@ def binarize_topics(
         topic_dist = pd.DataFrame(topic_dist)
 
     # smooth topics:
-    topic_dist = _smooth_topics_f(topic_dist)
+    topic_dist = smooth_and_scale_topics(topic_dist)
 
     binarized_topics = {}
     for i, col in enumerate(topic_dist.columns):
-        l = np.asarray(topic_dist.iloc[:, i])
-        l_norm = (l - np.min(l)) / np.ptp(l)
-
-        thr = _threshold_otsu(l_norm, nbins=nbins)
-        binarized_topics[col] = pd.DataFrame(topic_dist.iloc[l_norm > thr, i])
+        thr = _threshold_otsu(col.values, nbins=nbins)
+        binarized_topics[col] = pd.DataFrame(topic_dist.iloc[col.values > thr, i])
 
     # binary empty df
     binarized_df = pd.DataFrame(
