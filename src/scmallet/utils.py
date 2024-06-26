@@ -12,7 +12,7 @@ def get_mallet_path():
             "Please install it with `conda install -c conda-forge mallet` "
             "or `mamba install -c conda-forge mallet`"
         )
-        exit(1)
+        raise FileNotFoundError("Mallet not found.")
     return path.strip()
 
 
