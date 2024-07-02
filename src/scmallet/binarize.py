@@ -16,9 +16,7 @@ def _norm_topics(x):
 
 def smooth_and_scale_topics(topic_table: pd.DataFrame):
     topic_table_np = np.apply_along_axis(_norm_topics, 1, topic_table.values)
-    topic_table = pd.DataFrame(
-        topic_table_np, index=topic_table.index, columns=topic_table.columns
-    )
+    topic_table = pd.DataFrame(topic_table_np, index=topic_table.index, columns=topic_table.columns)
     topic_table = topic_table.apply(lambda l: (l - np.min(l)) / np.ptp(l), axis=0)
     return topic_table
 
