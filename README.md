@@ -34,9 +34,9 @@ See example usage here: https://github.com/lhqing/scmallet/blob/main/tests/examp
 
 ## Citation
 
--   Mallet Package: https://mimno.github.io/Mallet/
+- Mallet Package: https://mimno.github.io/Mallet/
 
     > McCallum, Andrew Kachites. "MALLET: A Machine Learning for Language Toolkit." http://mallet.cs.umass.edu. 2002.
 
--   PyCistopic: https://github.com/aertslab/pycisTopic
+- PyCistopic: https://github.com/aertslab/pycisTopic
     > Bravo Gonzalez-Blas, C. & De Winter, S. et al. (2022). SCENIC+: single-cell multiomic inference of enhancers and gene regulatory networks

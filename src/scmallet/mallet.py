@@ -401,7 +401,7 @@ class Mallet:
             f"--beta {beta} "
             f"--optimize-interval {optimize_interval} "
             f"--optimize-burn-in {optimize_burn_in} "
-            f"--num-threads {int(n_cpu*2)} "
+            f"--num-threads {int(n_cpu * 2)} "
             f"--num-iterations {iterations} "
             f"--output-state {state_path} "
             f"--output-doc-topics {doctopics_path} "
